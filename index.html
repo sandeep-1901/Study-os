@@ -377,6 +377,62 @@ body::before{
 .rule-text{font-size:14px;color:var(--text2);line-height:1.5;flex:1}
 .rule-card.checked .rule-text{color:var(--text)}
 
+/* ── SKIP REASON ── */
+.skip-reason{
+  margin-top:8px;padding:8px 10px;
+  background:rgba(242,92,92,.07);border:1px solid rgba(242,92,92,.18);
+  border-radius:8px;font-size:11px;color:#f87171;line-height:1.5;
+  display:flex;align-items:flex-start;gap:7px
+}
+.skip-reason-icon{flex-shrink:0;margin-top:1px}
+.skip-reason-text{flex:1;word-break:break-word}
+.skip-reason-edit{
+  font-size:9px;padding:2px 6px;border-radius:6px;
+  border:1px solid rgba(242,92,92,.3);background:transparent;
+  color:#f87171;cursor:pointer;font-family:'DM Mono',monospace;
+  flex-shrink:0;transition:background .15s
+}
+.skip-reason-edit:hover{background:rgba(242,92,92,.12)}
+.block.skipped{border-color:rgba(242,92,92,.2);background:rgba(242,92,92,.03)}
+.block.skipped .block-bar{background:#f25c5c !important}
+.block.skipped .block-title{color:#f87171;opacity:.8}
+
+/* ── JUSTIFY SHEET ── */
+#justify-overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:250;
+  display:none;align-items:flex-end;justify-content:center;
+  backdrop-filter:blur(8px)
+}
+#justify-overlay.open{display:flex}
+.justify-sheet{
+  background:var(--surface);border:1px solid var(--border2);
+  border-radius:22px 22px 0 0;width:100%;max-width:600px;
+  padding:22px 20px calc(22px + var(--safe-bot));
+  animation:slideUp .28s cubic-bezier(.4,0,.2,1)
+}
+.justify-block-info{
+  background:var(--surface2);border:1px solid var(--border);
+  border-radius:10px;padding:12px 14px;margin-bottom:16px
+}
+.justify-block-name{font-size:14px;font-weight:500;margin-bottom:2px}
+.justify-block-meta{font-size:11px;color:var(--text3)}
+.justify-textarea{
+  width:100%;background:var(--surface2);border:1px solid var(--border2);
+  border-radius:10px;padding:12px 13px;color:var(--text);
+  font-family:'DM Mono',monospace;font-size:13px;outline:none;
+  transition:border-color .2s;resize:none;min-height:100px;
+  -webkit-appearance:none;line-height:1.5
+}
+.justify-textarea:focus{border-color:var(--red)}
+.justify-textarea::placeholder{color:var(--text3)}
+.justify-quick-picks{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.quick-pick{
+  padding:5px 11px;border-radius:16px;border:1px solid var(--border2);
+  background:transparent;color:var(--text3);font-size:10px;cursor:pointer;
+  font-family:'DM Mono',monospace;transition:all .2s;white-space:nowrap
+}
+.quick-pick:hover{border-color:rgba(242,92,92,.4);color:#f87171;background:rgba(242,92,92,.07)}
+
 /* ── TOAST ── */
 #toast{
   position:fixed;top:calc(var(--safe-top)+58px);left:50%;
@@ -643,6 +699,35 @@ body::before{
   </button>
 </nav>
 
+<!-- ── JUSTIFY / SKIP REASON SHEET ── -->
+<div id="justify-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:250;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(8px)">
+  <div class="justify-sheet">
+    <div class="sheet-handle"></div>
+    <div style="font-family:'DM Serif Display',serif;font-size:20px;margin-bottom:4px">Why skipped? 🤔</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:16px;letter-spacing:.05em">Be honest — it helps you improve tomorrow</div>
+    <div class="justify-block-info">
+      <div class="justify-block-name" id="justify-block-name">—</div>
+      <div class="justify-block-meta" id="justify-block-meta">—</div>
+    </div>
+    <div style="font-size:9px;color:var(--text3);letter-spacing:.15em;text-transform:uppercase;margin-bottom:8px">Quick picks</div>
+    <div class="justify-quick-picks">
+      <button class="quick-pick">Ran out of time</button>
+      <button class="quick-pick">Felt too tired</button>
+      <button class="quick-pick">Got distracted</button>
+      <button class="quick-pick">Had an emergency</button>
+      <button class="quick-pick">Will catch up later</button>
+      <button class="quick-pick">Wasn't feeling well</button>
+    </div>
+    <div style="font-size:9px;color:var(--text3);letter-spacing:.15em;text-transform:uppercase;margin-bottom:8px">Your reason</div>
+    <textarea class="justify-textarea" id="justify-input" placeholder="Write your reason here..."></textarea>
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button class="btn-primary" id="btn-save-justify" style="background:linear-gradient(135deg,#f25c5c,#c94040)">Save &amp; Skip</button>
+      <button class="btn-secondary" id="btn-skip-justify">No reason</button>
+      <button class="btn-secondary" id="btn-cancel-justify">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ══ CONSTANTS ══ */
 var DEFAULT_SCHEDULE=[
@@ -685,6 +770,7 @@ var TYPE_CFG={
 /* ══ STATE ══ */
 var currentDayKey, calViewYear, calViewMonth, currentPage='today';
 var editingIndex=-1, selectedType='deep';
+var justifyIdx=-1; // block index being justified
 var fbDb=null, fbAuth=null, fbUser=null, fbUnsub=null, fbReady=false;
 
 /* ══ HELPERS ══ */
@@ -720,6 +806,8 @@ function getChecked(k){var r=localStorage.getItem('checked_'+k);return r?JSON.pa
 function setChecked(k,o){localStorage.setItem('checked_'+k,JSON.stringify(o));}
 function getRulesChecked(){var r=localStorage.getItem('rules_checked');return r?JSON.parse(r):{};}
 function setRulesChecked(o){localStorage.setItem('rules_checked',JSON.stringify(o));}
+function getSkipReasons(k){var r=localStorage.getItem('skip_'+k);return r?JSON.parse(r):{};}
+function setSkipReasons(k,o){localStorage.setItem('skip_'+k,JSON.stringify(o));}
 
 /* ══ FIREBASE CONFIG ══ */
 function getCfg(){var c=localStorage.getItem('fb_cfg');return c?JSON.parse(c):null;}
@@ -855,6 +943,13 @@ function persistRules(obj){
   }
 }
 
+function persistSkipReasons(dayKey,obj){
+  setSkipReasons(dayKey,obj);
+  if(fbReady&&fbUser&&fbDb){
+    fbDb.collection('study/'+fbUser.uid+'/skips').doc(dayKey).set({reasons:obj}).catch(function(){});
+  }
+}
+
 /* ══ AUTH ══ */
 function signInGoogle(){
   if(!fbReady){showToast('⚠️ Open from GitHub Pages (https://) first');return;}
@@ -946,6 +1041,7 @@ function renderToday(){
   var dayN=dayNumber(currentDayKey);
   var wk=weekKeyFor(dayN);
   var checked=getChecked(currentDayKey);
+  var skips=getSkipReasons(currentDayKey);
   var activeIdx=(currentDayKey===todayKey())?getCurrentBlockIndex():-1;
   var completedCount=Object.values(checked).filter(Boolean).length;
   var total=SCHEDULE.length;
@@ -970,17 +1066,38 @@ function renderToday(){
   var list=$('schedule-list');list.innerHTML='';
   SCHEDULE.forEach(function(block,i){
     var cfg=TYPE_CFG[block.type]||TYPE_CFG.routine;
-    var isDone=!!checked[i];var isCurrent=activeIdx===i;var dur=block[wk];
+    var isDone=!!checked[i];
+    var hasSkip=!isDone&&skips[i];
+    var isCurrent=activeIdx===i;
+    var dur=block[wk];
     var el=document.createElement('div');
-    el.className='block'+(isDone?' done':'')+(isCurrent?' current':'');
+    el.className='block'+(isDone?' done':hasSkip?' skipped':'')+(isCurrent?' current':'');
+    var skipHtml='';
+    if(hasSkip){
+      skipHtml='<div class="skip-reason">'+
+        '<span class="skip-reason-icon">💬</span>'+
+        '<span class="skip-reason-text">'+escapeHtml(skips[i])+'</span>'+
+        '<button class="skip-reason-edit" data-edit-skip="'+i+'">edit</button>'+
+      '</div>';
+    } else if(!isDone){
+      // show a soft "add reason" prompt
+      skipHtml='<div style="margin-top:6px">'+
+        '<button class="add-reason-btn" data-add-reason="'+i+'" style="'+
+          'font-size:10px;padding:4px 10px;border-radius:8px;border:1px dashed rgba(242,92,92,.25);'+
+          'background:transparent;color:var(--text3);cursor:pointer;font-family:\'DM Mono\',monospace;'+
+          'transition:all .2s;letter-spacing:.04em'+
+        '">+ add skip reason</button>'+
+      '</div>';
+    }
     el.innerHTML=
-      '<div class="block-bar" style="background:'+(isDone?'#22c55e':cfg.color)+'"></div>'+
+      '<div class="block-bar" style="background:'+(isDone?'#22c55e':hasSkip?'#f25c5c':cfg.color)+'"></div>'+
       '<div class="block-body">'+
         '<div class="block-top">'+
           '<div class="block-left">'+
             '<div class="block-time">'+block.time+(isCurrent?'<span class="now-badge">NOW</span>':'')+'</div>'+
             '<div class="block-title">'+block.activity+'</div>'+
             '<div class="block-focus">'+block.focus+'</div>'+
+            skipHtml+
           '</div>'+
           '<div class="block-right">'+
             '<div class="check-circle">'+(isDone?'✓':'')+'</div>'+
@@ -989,21 +1106,119 @@ function renderToday(){
           '</div>'+
         '</div>'+
       '</div>';
+    // check circle click = toggle
+    el.querySelector('.check-circle').addEventListener('click',function(e){
+      e.stopPropagation();toggleBlock(i);
+    });
+    // clicking the body (not buttons) = toggle
+    el.querySelector('.block-body').addEventListener('click',function(e){
+      if(e.target.closest('.edit-btn')||e.target.closest('.add-reason-btn')||e.target.closest('.skip-reason-edit'))return;
+      toggleBlock(i);
+    });
     el.querySelector('.edit-btn').addEventListener('click',function(e){
       e.stopPropagation();openEditModal(parseInt(this.dataset.idx));
     });
-    el.addEventListener('click',function(){toggleBlock(i);});
+    var addBtn=el.querySelector('[data-add-reason]');
+    if(addBtn){
+      addBtn.addEventListener('click',function(e){
+        e.stopPropagation();openJustifySheet(parseInt(this.dataset.addReason),false);
+      });
+    }
+    var editSkipBtn=el.querySelector('[data-edit-skip]');
+    if(editSkipBtn){
+      editSkipBtn.addEventListener('click',function(e){
+        e.stopPropagation();openJustifySheet(parseInt(this.dataset.editSkip),false);
+      });
+    }
     list.appendChild(el);
   });
 }
 
+function escapeHtml(str){
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 function toggleBlock(idx){
   var checked=getChecked(currentDayKey);
+  var wasChecked=!!checked[idx];
   checked[idx]=!checked[idx];
   persistChecked(currentDayKey,checked);
+
+  if(!checked[idx]){
+    // just unchecked — prompt for skip reason
+    openJustifySheet(idx,true);
+  } else {
+    // just checked as done — clear any skip reason
+    var skips=getSkipReasons(currentDayKey);
+    delete skips[idx];
+    persistSkipReasons(currentDayKey,skips);
+    var SCHEDULE=getSchedule();
+    showToast((TYPE_CFG[SCHEDULE[idx].type]||TYPE_CFG.routine).icon+' '+SCHEDULE[idx].activity+' done!');
+  }
   renderToday();
+}
+
+/* ══ JUSTIFY SHEET ══ */
+function openJustifySheet(idx,fromToggle){
+  justifyIdx=idx;
   var SCHEDULE=getSchedule();
-  if(checked[idx])showToast((TYPE_CFG[SCHEDULE[idx].type]||TYPE_CFG.routine).icon+' '+SCHEDULE[idx].activity+' done!');
+  var block=SCHEDULE[idx];
+  var skips=getSkipReasons(currentDayKey);
+
+  $('justify-block-name').textContent=block.activity;
+  $('justify-block-meta').textContent=block.time+' · '+block.focus;
+  $('justify-input').value=skips[idx]||'';
+
+  // wire up quick picks each time (fresh)
+  document.querySelectorAll('.quick-pick').forEach(function(btn){
+    btn.onclick=function(){
+      var cur=$('justify-input').value.trim();
+      $('justify-input').value=cur?cur+', '+btn.textContent:btn.textContent;
+      $('justify-input').focus();
+    };
+  });
+
+  $('justify-overlay').style.display='flex';
+  setTimeout(function(){$('justify-input').focus();},320);
+}
+
+function closeJustifySheet(){
+  $('justify-overlay').style.display='none';
+  justifyIdx=-1;
+}
+
+function saveJustify(){
+  var reason=$('justify-input').value.trim();
+  if(justifyIdx<0){closeJustifySheet();return;}
+  var skips=getSkipReasons(currentDayKey);
+  if(reason){skips[justifyIdx]=reason;}else{delete skips[justifyIdx];}
+  persistSkipReasons(currentDayKey,skips);
+  closeJustifySheet();
+  renderToday();
+  showToast(reason?'📝 Skip reason saved':'✓ No reason recorded');
+}
+
+function skipJustify(){
+  // save with no reason — just close
+  if(justifyIdx>=0){
+    var skips=getSkipReasons(currentDayKey);
+    delete skips[justifyIdx];
+    persistSkipReasons(currentDayKey,skips);
+  }
+  closeJustifySheet();
+  renderToday();
+}
+
+function cancelJustify(){
+  // if from toggle (wasChecked=false now), undo the uncheck
+  if(justifyIdx>=0){
+    var checked=getChecked(currentDayKey);
+    // restore to checked state
+    checked[justifyIdx]=true;
+    persistChecked(currentDayKey,checked);
+  }
+  closeJustifySheet();
+  renderToday();
 }
 
 function changeDay(delta){
@@ -1293,6 +1508,12 @@ document.addEventListener('DOMContentLoaded',function(){
   $('btn-save-cfg').addEventListener('click',saveCfg);
   $('btn-close-firebase').addEventListener('click',closeFirebaseSheet);
   $('firebase-sheet').addEventListener('click',function(e){if(e.target===$('firebase-sheet'))closeFirebaseSheet();});
+
+  // Justify / skip reason sheet
+  $('btn-save-justify').addEventListener('click',saveJustify);
+  $('btn-skip-justify').addEventListener('click',skipJustify);
+  $('btn-cancel-justify').addEventListener('click',cancelJustify);
+  $('justify-overlay').addEventListener('click',function(e){if(e.target===$('justify-overlay'))cancelJustify();});
 
   // Pre-fill saved config
   var c=getCfg();
