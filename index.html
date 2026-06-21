@@ -322,6 +322,7 @@ body::before{
 .cal-cell.today{border-color:var(--accent)}
 .cal-cell.selected{background:rgba(249,115,22,.15);border-color:var(--accent)}
 .cal-cell.has-data{background:rgba(255,255,255,.04)}
+.cal-cell.out-of-range{opacity:.25;cursor:default}
 .cal-cell-num{font-size:13px;color:var(--text2)}
 .cal-cell.today .cal-cell-num{color:var(--accent);font-weight:600}
 .cal-cell.selected .cal-cell-num{color:var(--accent)}
@@ -344,8 +345,8 @@ body::before{
 .big-stat-lbl{font-size:11px;color:var(--text2);margin-top:6px}
 .big-stat-sub{font-size:10px;color:var(--text3);margin-top:3px}
 .heatmap-wrap{overflow-x:auto;padding-bottom:8px}
-.heatmap{display:grid;grid-template-columns:repeat(31,1fr);gap:3px;min-width:500px}
-.heat-cell{aspect-ratio:1;border-radius:3px;background:var(--border);cursor:pointer;transition:opacity .2s}
+.heatmap{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,1fr);gap:3px;min-width:100%}
+.heat-cell{width:11px;height:11px;border-radius:3px;background:var(--border);cursor:pointer;transition:opacity .2s}
 .heat-cell:hover{opacity:.8}
 .heat-cell.l1{background:rgba(249,115,22,.25)}
 .heat-cell.l2{background:rgba(249,115,22,.5)}
@@ -541,7 +542,7 @@ body::before{
       <input class="field-input" id="f-w2" placeholder="e.g. 75 min or ✓"/>
     </div>
     <div class="field-group">
-      <label class="field-label">Duration — Weeks 3–4</label>
+      <label class="field-label">Duration — Weeks 3+</label>
       <input class="field-input" id="f-w34" placeholder="e.g. 90 min or ✓"/>
     </div>
     <div class="divider"></div>
@@ -582,7 +583,7 @@ body::before{
   <div class="day-nav">
     <button class="day-nav-btn" id="btn-prev-day">‹</button>
     <div class="day-info">
-      <div class="day-info-label">Day <span id="day-num-label">1</span> of 31</div>
+      <div class="day-info-label">Day <span id="day-num-label">1</span> of <span id="day-total-label">31</span></div>
       <div class="day-info-title" id="day-date-label">—</div>
       <div class="day-info-phase" id="day-phase-label">WEEK 1</div>
     </div>
@@ -610,7 +611,7 @@ body::before{
     <div class="header-row">
       <div>
         <div class="header-label">StudyOS</div>
-        <div class="header-title">31-Day <em>Calendar</em></div>
+        <div class="header-title"><em id="cal-range-title">2026</em> Calendar</div>
       </div>
     </div>
   </div>
@@ -767,11 +768,18 @@ var TYPE_CFG={
   routine:{color:"#facc15",bg:"rgba(250,204,21,0.12)",label:"Routine",icon:"⭐"}
 };
 
+/* ══ STORAGE VERSION ══
+   Bumping this invalidates all previous progress (checked blocks, skip
+   reasons, rules, schedule edits, and the old 31-day start date) so the
+   app starts completely clean under the new full-year program. */
+var STORE_VERSION='v3-2026full';
+
 /* ══ STATE ══ */
 var currentDayKey, calViewYear, calViewMonth, currentPage='today';
 var editingIndex=-1, selectedType='deep';
 var justifyIdx=-1; // block index being justified
 var fbDb=null, fbAuth=null, fbUser=null, fbUnsub=null, fbReady=false;
+var PROGRAM_TOTAL_DAYS=31; // recalculated in initProgramRange()
 
 /* ══ HELPERS ══ */
 function $(i){return document.getElementById(i);}
@@ -793,11 +801,68 @@ function setSyncState(s){
 function todayKey(){var n=new Date();return n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0')+'-'+String(n.getDate()).padStart(2,'0');}
 function keyToDate(k){var p=k.split('-').map(Number);return new Date(p[0],p[1]-1,p[2]);}
 function dateToKey(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
-function getStartDate(){var s=localStorage.getItem('startDate');if(!s){s=todayKey();localStorage.setItem('startDate',s);}return s;}
+
+/* ══ ONE-TIME RESET / MIGRATION ══
+   If the stored version doesn't match STORE_VERSION, wipe every piece of
+   progress this app has ever written to localStorage, then stamp the new
+   version so this only runs once. */
+function wipeAllProgress(){
+  var keys=[];
+  for(var i=0;i<localStorage.length;i++){
+    var k=localStorage.key(i);
+    if(k && (k.indexOf('checked_')===0 || k.indexOf('skip_')===0 ||
+             k==='rules_checked' || k==='schedule_v2' || k==='startDate' ||
+             k==='programEnd')){
+      keys.push(k);
+    }
+  }
+  keys.forEach(function(k){localStorage.removeItem(k);});
+}
+
+function runMigrationIfNeeded(){
+  var v=localStorage.getItem('store_version');
+  if(v!==STORE_VERSION){
+    wipeAllProgress();
+    localStorage.setItem('store_version',STORE_VERSION);
+  }
+}
+
+/* ══ PROGRAM RANGE: today → Dec 31, 2026 ══ */
+function getStartDate(){
+  var s=localStorage.getItem('startDate');
+  if(!s){s=todayKey();localStorage.setItem('startDate',s);}
+  return s;
+}
+function getEndDate(){
+  // Fixed end of the program: Dec 31, 2026.
+  var s=localStorage.getItem('programEnd');
+  if(!s){s='2026-12-31';localStorage.setItem('programEnd',s);}
+  return s;
+}
+function initProgramRange(){
+  var start=keyToDate(getStartDate());
+  var end=keyToDate(getEndDate());
+  PROGRAM_TOTAL_DAYS=Math.max(1,Math.round((end-start)/86400000)+1);
+}
+
 function dayNumber(key){return Math.floor((keyToDate(key)-keyToDate(getStartDate()))/86400000)+1;}
 function keyForDay(n){var d=new Date(keyToDate(getStartDate()));d.setDate(d.getDate()+n-1);return dateToKey(d);}
-function phaseFor(n){return n<=7?'WEEK 1':n<=14?'WEEK 2':'WEEKS 3–4';}
-function weekKeyFor(n){return n<=7?'w1':n<=14?'w2':'w34';}
+
+/* Phases now scale with the full program length instead of a fixed 7/14/31 split. */
+function phaseFor(n){
+  var oneThird=Math.ceil(PROGRAM_TOTAL_DAYS/3);
+  var twoThirds=Math.ceil((PROGRAM_TOTAL_DAYS*2)/3);
+  if(n<=oneThird)return 'PHASE 1';
+  if(n<=twoThirds)return 'PHASE 2';
+  return 'PHASE 3';
+}
+function weekKeyFor(n){
+  var oneThird=Math.ceil(PROGRAM_TOTAL_DAYS/3);
+  var twoThirds=Math.ceil((PROGRAM_TOTAL_DAYS*2)/3);
+  if(n<=oneThird)return 'w1';
+  if(n<=twoThirds)return 'w2';
+  return 'w34';
+}
 
 /* ══ LOCAL STORAGE ══ */
 function getSchedule(){var s=localStorage.getItem('schedule_v2');return s?JSON.parse(s):JSON.parse(JSON.stringify(DEFAULT_SCHEDULE));}
@@ -1046,8 +1111,10 @@ function renderToday(){
   var completedCount=Object.values(checked).filter(Boolean).length;
   var total=SCHEDULE.length;
 
-  $('day-number-header').textContent=Math.max(1,Math.min(31,dayN));
-  $('day-num-label').textContent=Math.max(1,Math.min(31,dayN));
+  var clampedDayN=Math.max(1,Math.min(PROGRAM_TOTAL_DAYS,dayN));
+  $('day-number-header').textContent=clampedDayN;
+  $('day-num-label').textContent=clampedDayN;
+  $('day-total-label').textContent=PROGRAM_TOTAL_DAYS;
   $('day-phase-label').textContent=phaseFor(dayN);
   var dk=keyToDate(currentDayKey);
   $('day-date-label').textContent=dk.toLocaleDateString([],{weekday:'long',month:'short',day:'numeric'});
@@ -1061,7 +1128,7 @@ function renderToday(){
   $('today-stats').innerHTML=
     '<div class="stat-card"><div class="stat-icon">🔥</div><div class="stat-val">'+deepDone+'/'+deepTotal+'</div><div class="stat-lbl">Deep Work</div></div>'+
     '<div class="stat-card"><div class="stat-icon">✅</div><div class="stat-val">'+pct+'%</div><div class="stat-lbl">Complete</div></div>'+
-    '<div class="stat-card"><div class="stat-icon">📅</div><div class="stat-val">Day '+Math.max(1,Math.min(31,dayN))+'</div><div class="stat-lbl">'+phaseFor(dayN)+'</div></div>';
+    '<div class="stat-card"><div class="stat-icon">📅</div><div class="stat-val">Day '+clampedDayN+'</div><div class="stat-lbl">'+phaseFor(dayN)+'</div></div>';
 
   var list=$('schedule-list');list.innerHTML='';
   SCHEDULE.forEach(function(block,i){
@@ -1224,7 +1291,7 @@ function cancelJustify(){
 function changeDay(delta){
   var d=keyToDate(currentDayKey);d.setDate(d.getDate()+delta);
   var nk=dateToKey(d);var nn=dayNumber(nk);
-  if(nn<1||nn>31){showToast(nn<1?'📅 Start of program!':'📅 End of 31-day program!');return;}
+  if(nn<1||nn>PROGRAM_TOTAL_DAYS){showToast(nn<1?'📅 Start of program!':'📅 End of program (Dec 31, 2026)!');return;}
   currentDayKey=nk;renderToday();
 }
 
@@ -1297,6 +1364,10 @@ function renderCalendar(){
   var SCHEDULE=getSchedule();
   var months=['January','February','March','April','May','June','July','August','September','October','November','December'];
   $('cal-month-title').textContent=months[calViewMonth]+' '+calViewYear;
+  var startD=keyToDate(getStartDate()), endD=keyToDate(getEndDate());
+  $('cal-range-title').textContent=startD.getFullYear()===endD.getFullYear()
+    ? String(startD.getFullYear())
+    : (startD.getFullYear()+'–'+endD.getFullYear());
   var cells=$('cal-cells');cells.innerHTML='';
   var firstDay=new Date(calViewYear,calViewMonth,1).getDay();
   var daysInMonth=new Date(calViewYear,calViewMonth+1,0).getDate();
@@ -1305,13 +1376,13 @@ function renderCalendar(){
   for(var d=1;d<=daysInMonth;d++){
     (function(d2){
       var date=new Date(calViewYear,calViewMonth,d2);var key=dateToKey(date);
-      var dayN=dayNumber(key);var inProg=dayN>=1&&dayN<=31;
+      var dayN=dayNumber(key);var inProg=dayN>=1&&dayN<=PROGRAM_TOTAL_DAYS;
       var isToday=dateToKey(today)===key;var isSel=currentDayKey===key;
       var ch=getChecked(key);var cnt=Object.values(ch).filter(Boolean).length;
       var pct=SCHEDULE.length>0?Math.round((cnt/SCHEDULE.length)*100):0;
       var hasData=cnt>0;
       var el=document.createElement('div');
-      el.className='cal-cell'+(isToday?' today':'')+(isSel?' selected':'')+(hasData?' has-data':'');
+      el.className='cal-cell'+(isToday?' today':'')+(isSel&&inProg?' selected':'')+(hasData?' has-data':'')+(inProg?'':' out-of-range');
       var dc=hasData?(pct>=80?'#22c55e':pct>=50?'#facc15':'#f97316'):'';
       el.innerHTML='<span class="cal-cell-num">'+d2+'</span>'+
         (hasData?'<div class="cal-cell-dot" style="background:'+dc+'"></div><div class="cal-cell-mini">'+pct+'%</div>':'');
@@ -1324,7 +1395,7 @@ function renderCalendar(){
 
 function showCalDaySummary(key){
   var SCHEDULE=getSchedule();var summary=$('cal-day-summary');
-  var dayN=dayNumber(key);if(dayN<1||dayN>31){summary.style.display='none';return;}
+  var dayN=dayNumber(key);if(dayN<1||dayN>PROGRAM_TOTAL_DAYS){summary.style.display='none';return;}
   var dk=keyToDate(key);var checked=getChecked(key);
   $('cal-sum-date').textContent='Day '+dayN+' · '+dk.toLocaleDateString([],{weekday:'long',month:'long',day:'numeric'});
   var done=Object.values(checked).filter(Boolean).length;
@@ -1358,7 +1429,7 @@ function renderStats(){
   var SCHEDULE=getSchedule();var content=$('stats-content');
   var totalDone=0,running=0,bestStreak=0,activeDays=0;
   var typeCounts={deep:0,study:0,health:0,break:0,routine:0};var heatData=[];
-  for(var d=1;d<=31;d++){
+  for(var d=1;d<=PROGRAM_TOTAL_DAYS;d++){
     var key=keyForDay(d);var checked=getChecked(key);
     var count=Object.values(checked).filter(Boolean).length;
     var pct=SCHEDULE.length>0?count/SCHEDULE.length:0;
@@ -1368,20 +1439,38 @@ function renderStats(){
     SCHEDULE.forEach(function(s,i){if(checked[i])typeCounts[s.type]=(typeCounts[s.type]||0)+1;});
   }
   var streak=0;var todayN=dayNumber(todayKey());
-  for(var d2=Math.min(todayN,31);d2>=1;d2--){
+  for(var d2=Math.min(todayN,PROGRAM_TOTAL_DAYS);d2>=1;d2--){
     var k=keyForDay(d2);var c=getChecked(k);
     if(Object.values(c).filter(Boolean).length>0)streak++;else break;
   }
   var maxType=Math.max.apply(null,Object.values(typeCounts))||1;
+
+  // Build month-by-month breakdown across the whole range (today → Dec 31, 2026)
+  var startD=keyToDate(getStartDate()), endD=keyToDate(getEndDate());
+  var months=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var monthBlocks=[];
+  var cursor=new Date(startD.getFullYear(),startD.getMonth(),1);
+  while(cursor<=endD){
+    var mStart=new Date(Math.max(cursor,startD));
+    var mEndCandidate=new Date(cursor.getFullYear(),cursor.getMonth()+1,0);
+    var mEnd=new Date(Math.min(mEndCandidate,endD));
+    var dStart=dayNumber(dateToKey(mStart)), dEnd=dayNumber(dateToKey(mEnd));
+    var done=0,possible=0;
+    for(var dd=dStart;dd<=dEnd;dd++){var ch2=getChecked(keyForDay(dd));done+=Object.values(ch2).filter(Boolean).length;possible+=SCHEDULE.length;}
+    var p2=possible>0?Math.round((done/possible)*100):0;
+    monthBlocks.push({label:months[cursor.getMonth()]+' '+cursor.getFullYear(),done:done,possible:possible,pct:p2});
+    cursor=new Date(cursor.getFullYear(),cursor.getMonth()+1,1);
+  }
+
   content.innerHTML=
     '<div class="stats-section-title">Overview</div>'+
     '<div class="big-stat-row">'+
       '<div class="big-stat"><div class="big-stat-num">'+streak+'</div><div class="big-stat-lbl">Day Streak 🔥</div><div class="big-stat-sub">Best: '+bestStreak+' days</div></div>'+
-      '<div class="big-stat"><div class="big-stat-num">'+activeDays+'</div><div class="big-stat-lbl">Active Days</div><div class="big-stat-sub">of 31 total</div></div>'+
-      '<div class="big-stat"><div class="big-stat-num">'+totalDone+'</div><div class="big-stat-lbl">Blocks Done</div><div class="big-stat-sub">of '+(31*SCHEDULE.length)+' total</div></div>'+
-      '<div class="big-stat"><div class="big-stat-num">'+Math.round((totalDone/(31*SCHEDULE.length||1))*100)+'%</div><div class="big-stat-lbl">Completion</div><div class="big-stat-sub">overall rate</div></div>'+
+      '<div class="big-stat"><div class="big-stat-num">'+activeDays+'</div><div class="big-stat-lbl">Active Days</div><div class="big-stat-sub">of '+PROGRAM_TOTAL_DAYS+' total</div></div>'+
+      '<div class="big-stat"><div class="big-stat-num">'+totalDone+'</div><div class="big-stat-lbl">Blocks Done</div><div class="big-stat-sub">of '+(PROGRAM_TOTAL_DAYS*SCHEDULE.length)+' total</div></div>'+
+      '<div class="big-stat"><div class="big-stat-num">'+Math.round((totalDone/(PROGRAM_TOTAL_DAYS*SCHEDULE.length||1))*100)+'%</div><div class="big-stat-lbl">Completion</div><div class="big-stat-sub">overall rate</div></div>'+
     '</div>'+
-    '<div class="stats-section-title">31-Day Heatmap</div>'+
+    '<div class="stats-section-title">Full Program Heatmap ('+PROGRAM_TOTAL_DAYS+' days)</div>'+
     '<div class="heatmap-wrap"><div class="heatmap">'+
       heatData.map(function(h){
         var lvl=h.count===0?'':h.pct>=.8?'l4':h.pct>=.5?'l3':h.pct>=.25?'l2':'l1';
@@ -1410,22 +1499,18 @@ function renderStats(){
         '</div>';
       }).join('')+
     '</div>'+
-    '<div class="stats-section-title">Weekly Breakdown</div>'+
+    '<div class="stats-section-title">Monthly Breakdown</div>'+
     '<div style="display:flex;flex-direction:column;gap:10px">'+
-      ['Week 1 (Days 1–7)','Week 2 (Days 8–14)','Weeks 3–4 (Days 15–31)'].map(function(label,wi){
-        var range=wi===0?[1,7]:wi===1?[8,14]:[15,31];
-        var done=0,possible=0;
-        for(var d=range[0];d<=range[1];d++){var ch=getChecked(keyForDay(d));done+=Object.values(ch).filter(Boolean).length;possible+=SCHEDULE.length;}
-        var p=possible>0?Math.round((done/possible)*100):0;
+      monthBlocks.map(function(m){
         return'<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px">'+
           '<div style="display:flex;justify-content:space-between;margin-bottom:8px">'+
-            '<span style="font-size:12px;color:var(--text2)">'+label+'</span>'+
-            '<span style="font-size:12px;color:var(--accent)">'+p+'%</span>'+
+            '<span style="font-size:12px;color:var(--text2)">'+m.label+'</span>'+
+            '<span style="font-size:12px;color:var(--accent)">'+m.pct+'%</span>'+
           '</div>'+
           '<div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden">'+
-            '<div style="height:100%;width:'+p+'%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:2px"></div>'+
+            '<div style="height:100%;width:'+m.pct+'%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:2px"></div>'+
           '</div>'+
-          '<div style="font-size:10px;color:var(--text3);margin-top:6px">'+done+' / '+possible+' blocks</div>'+
+          '<div style="font-size:10px;color:var(--text3);margin-top:6px">'+m.done+' / '+m.possible+' blocks</div>'+
         '</div>';
       }).join('')+
     '</div>';
@@ -1468,7 +1553,11 @@ function showPage(name,btn){
 
 /* ══ DOM READY ══ */
 document.addEventListener('DOMContentLoaded',function(){
+  // Wipe old progress and migrate to the new full-year program (one-time).
+  runMigrationIfNeeded();
+
   currentDayKey=todayKey();
+  initProgramRange();
   calViewYear=new Date().getFullYear();
   calViewMonth=new Date().getMonth();
 
